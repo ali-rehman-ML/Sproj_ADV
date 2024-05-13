@@ -1,0 +1,8 @@
+prefix=/home/robot1/catkin_ws/devel
+
+Name: robot_launcher
+Description: Description of robot_launcher
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

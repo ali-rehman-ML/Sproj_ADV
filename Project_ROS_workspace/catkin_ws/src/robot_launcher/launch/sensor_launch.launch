@@ -1,0 +1,39 @@
+<launch>
+
+  <arg name="param_file_name" default="zed_f9p" />
+
+  <include file="$(find ublox_gps)/launch/ublox_device.launch">
+    <arg name="param_file_name" value="$(arg param_file_name)" />
+  </include>
+
+
+
+<include file="$(find rplidar_ros)/launch/rplidar_a2m12.launch"/>
+
+  <arg name="razor_config_file" default="$(find razor_imu_9dof)/config/my_razor.yaml"/>
+  <node pkg="razor_imu_9dof" type="imu_node.py" name="imu_node" output="screen">
+  <!-- <node pkg="razor_imu_9dof" type="imu_node.py" name="imu_node" output="screen" respawn="true" respawn_delay="2"> -->
+    <rosparam file="$(arg razor_config_file)" command="load"/>
+  </node>
+
+
+
+  <node pkg="rosserial_python" type="serial_node.py" name="mega_node" output="screen" >
+  <param name="port" value="/dev/ard_mega"/>
+  <param name="baud" value="115200"/>
+  </node>
+
+  <node pkg="rosserial_python" type="serial_node.py" name="esp_node" output="screen" >
+  <param name="port" value="/dev/esp_port"/>
+  <param name="baud" value="57600"/>
+  </node>
+
+  <node pkg="robot_launcher" type="lidar_check.py" name="lidar_obstacle_brake"/>
+  <node pkg="robot_launcher" type="brake_pub.py" name="brake_msg_pub"/>
+
+
+
+
+</launch>
+
+

@@ -1,0 +1,88 @@
+<launch>
+  <!-- <arg name="razor_config_file" default="$(find razor_imu_9dof)/config/my_razor.yaml"/> -->
+  <!-- <node pkg="razor_imu_9dof" type="imu_node.py" name="imu_node" output="screen"> -->
+  <!-- <node pkg="razor_imu_9dof" type="imu_node.py" name="imu_node" output="screen" respawn="true" respawn_delay="2"> -->
+    <!-- <rosparam file="$(arg razor_config_file)" command="load"/> -->
+  <!-- </node> -->
+
+<!-- <node pkg="nmea_navsat_driver" type="nmea_serial_driver" name="navsat" respawn="true">
+  <param name="port" value="/dev/gps_port"/>
+  <param name="baud" value="9600"/>
+</node> -->
+
+<!-- <include file="$(find rplidar_ros)/launch/rplidar_a2m12.launch"/> -->
+
+
+  
+
+
+  <!-- Define arguments -->
+  <arg name="enable_infra1" default="true" />
+  <arg name="enable_infra2" default="true" />
+  <arg name="color_width" default="640" />
+  <arg name="color_height" default="480" />
+  <arg name="color_fps" default="15" />
+  <arg name="infra_fps" default="15" />
+
+
+
+
+
+
+
+
+
+  <!-- Launch rs_camera.launch with arguments -->
+  <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+    <arg name="enable_infra1" value="$(arg enable_infra1)" />
+    <arg name="enable_infra2" value="$(arg enable_infra2)" />
+    <arg name="infra_fps" value="$(arg infra_fps)" />
+    <arg name="color_width" value="$(arg color_width)" />
+    <arg name="color_height" value="$(arg color_height)" />
+    <arg name="color_fps" value="$(arg color_fps)" />
+
+
+  </include>
+
+<!-- Rtabmap Visual sterio Odometry  Parameters-->
+  <include file="$(find rtabmap_ros)/launch/rtabmap.launch">
+    <arg name="rtabmap_args" value="--delete_db_on_start" />
+    <arg name="left_image_topic" value="/camera/infra1/image_rect_raw" />
+    <arg name="right_image_topic" value="/camera/infra2/image_rect_raw" />
+    <arg name="left_camera_info_topic" value="/camera/infra1/camera_info" />
+    <arg name="right_camera_info_topic" value="/camera/infra2/camera_info" />
+    <arg name="stereo" value="true" />
+  </include>
+
+
+  <!-- <node pkg="rosserial_python" type="serial_node.py" name="mega_node" output="screen" >
+  <param name="port" value="/dev/ard_mega"/>
+  <param name="baud" value="115200"/>
+  </node> -->
+
+  <!-- <node pkg="rosserial_python" type="serial_node.py" name="esp_node" output="screen" >
+  <param name="port" value="/dev/esp_port"/>
+  <param name="baud" value="57600"/>
+  </node> -->
+
+
+  <!-- <node pkg="robot_launcher" type="odom.py" name="wheel_odom_node"/> -->
+  <!-- <node pkg="robot_launcher" type="yaw_pub.py" name="imu_compass_node" output="screen"/> -->
+
+  <node pkg="tf" type="static_transform_publisher" name="imu_to_base_link" args="0.7 0.6 0 0 0 0 base_link base_imu_link 110"/>
+  <!-- <node pkg="tf" type="static_transform_publisher" name="odom_ticks_odom" args="-0.7 0 -1 0 0 0 base_link wheel_odom 100"/> -->
+  <!-- <node pkg="tf" type="static_transform_publisher" name="vo_base_link" args="0.7 0 0 0 0 0 base_link visual_odom 100"/> -->
+  <node pkg="tf" type="static_transform_publisher" name="camera_link_to_base_links" args="0.7 0 0 0 0 0 base_link camera_link 100"/>
+
+  <!-- <node pkg="robot_launcher" type="wheel_odom_tf.py" name="wheel_odom_tf_pub"/>
+  <node pkg="robot_launcher" type="vo_odom_tf_pub.py" n+ame="visual_odom_tf_pub"/> -->
+  
+
+
+  <!-- <node pkg="robot_launcher" type="topic_test.py" name="road_mask_pub"/> -->
+
+
+
+</launch>
+
+
