@@ -1,0 +1,643 @@
+/*
+   - NOTE: IF 'ENABLE_L298N' Pin is PWM, only then SpeedControl is possible.
+   - RM = Right Motor
+   - LM = Left Motor
+   - Use "Bluetooth RC Controller" Andriod App for HC-05 Arduino Bluetooth Car Interface.
+   - Horn Can be a Buzzer.
+*/
+
+//Link for adding ros
+//https://medium.com/@e850506/ros-serial-with-esp-32-246248cb6bac
+//https://wiki.ros.org/rosserial/Overview/Publishers%20and%20Subscribers?source=post_page-----246248cb6bac--------------------------------
+
+#include <ros.h>
+#include <std_msgs/Int32.h>
+#include <std_msgs/Bool.h>
+//#include <std_msgs/Float64.h>
+#include "BluetoothSerial.h"  // For ESP32-BT
+
+#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
+#error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
+#endif
+
+#if !defined(CONFIG_BT_SPP_ENABLED)
+#error Serial Bluetooth not available or not enabled. It is only available for the ESP32 chip.
+#endif
+
+// ============================================= Settings =============================================
+
+//Pin Assignments
+//#define HornPin                     23   // Final
+//#define HeadLightPin                19   //
+//#define BackLightPin                18   //
+
+#define LMPWMPin                     25  // Left
+#define RMPWMPin                     26  // Right
+#define LMBrakePin                   32  // L293D Input Pin Final
+#define RMBrakePin                   33  // L293D Input Pin Final
+#define LMReversePin                 14  // L293D Input Pin Final
+#define RMReversePin                 12  // L293D Input Pin Final
+
+//Debug Settings
+#define RC_CAR_DEBUG          //Uncomment if debugging not needed//
+
+//Serial Settings
+#define SERIAL_BAUD_RATE             57600
+
+//BT Settings
+#define BT_INCOMING_DATA_TIMEOUT_MS  1000            //BT data is sent every 50ms, consider disconnection if no data in 1000ms
+#define BT_DEVICE_NAME               "AgroBot"       //BT Name Broadcasted
+
+//Motor PWM Settings
+#define LM_PWM_CHANNEL_NUM           0
+#define RM_PWM_CHANNEL_NUM           1
+#define L298N_PWM_FREQ_HZ            4000
+#define L298N_PWM_RES_BITS           8
+
+// ============================================= Global Objects =============================================
+
+BluetoothSerial SerialBT;
+ros::NodeHandle nh;
+
+// ============================================= Global Variables =============================================
+
+char BT_RecieveCode;          // Heres where the recieved charecters from BT will be stored.
+uint8_t Car_Speed;
+
+uint8_t Left_Speed;
+uint8_t Right_Speed;
+uint8_t Left_Correction;
+uint8_t Right_Correction; 
+uint8_t Left_Brake;
+uint8_t Right_Brake;
+bool Forward_Direction;
+
+bool USE_PWM;
+bool Reverse;
+uint32_t BT_LastReceivedTime = 0;
+
+// ============================================= Functions =============================================
+
+template <typename T>
+inline void DEBUG_OUTPUT(T dataToOutput) {
+#ifdef RC_CAR_DEBUG
+  Serial.print(dataToOutput);
+#endif
+}
+
+
+template <typename T>
+inline void DEBUG_OUTPUTLN(T dataToOutput) {
+#ifdef RC_CAR_DEBUG
+  Serial.println(dataToOutput);
+#endif
+}
+
+
+void changePWMState(bool NewPWMState) {
+  if (NewPWMState) {
+    USE_PWM = true;
+    Left_Correction = 20;
+    Right_Correction = 20;
+    DEBUG_OUTPUTLN(F("PWM state is now True, ie Enabled"));
+  }
+  else {
+    USE_PWM = false;
+    DEBUG_OUTPUTLN(F("PWM state is now False, ie Disabled"));
+  }
+}
+
+
+void SetSpeed(char BT_RecievedCode) {
+  switch (BT_RecievedCode) {
+    case '0':
+      Car_Speed = 0;
+      break;
+    case '1':
+      Car_Speed = 92;
+      break;
+    case '2':
+      Car_Speed = 100;
+      break;
+    case '3':
+      Car_Speed = 105;
+      break;
+    case '4':
+      Car_Speed = 108;
+      break;
+    case '5':
+      Car_Speed = 110;
+      break;
+    case '6':
+      Car_Speed = 130;
+      break;
+    case '7':
+      Car_Speed = 150;
+      break;
+    case '8':
+      Car_Speed = 170;
+      break;
+    case '9':
+      Car_Speed = 190;
+      break;
+    case 'q':
+      Car_Speed = 220;
+      break;
+    default:
+      break;
+  }
+}
+
+
+void STOP() {
+  DEBUG_OUTPUTLN(F("\nSTOP !"));
+  if (USE_PWM) {
+    Left_Speed = 0;
+    Right_Speed = 0;
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+  }
+  else {
+    Left_Speed = Left_Correction;;
+    Right_Speed = Right_Correction;
+    
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+  }
+  digitalWrite(RMReversePin, Reverse);
+  digitalWrite(LMReversePin, Reverse);
+  digitalWrite(RMBrakePin, LOW);
+  digitalWrite(LMBrakePin, LOW);
+  Left_Brake = 0;
+  Right_Brake = 0;
+  Forward_Direction = true;
+}
+
+
+void moveForward() {
+  DEBUG_OUTPUTLN(F("\nmoveForward"));
+  if (USE_PWM) {
+    Left_Speed = Car_Speed;
+    Right_Speed = Car_Speed;
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+    DEBUG_OUTPUT(F("Car Speed is "));
+    DEBUG_OUTPUTLN(Car_Speed);
+  }
+  else {
+    Left_Speed = 0;
+    Right_Speed = 0;
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+  }
+  digitalWrite(RMReversePin, Reverse);
+  digitalWrite(LMReversePin, Reverse);
+  digitalWrite(RMBrakePin, LOW);
+  digitalWrite(LMBrakePin, LOW);
+  Left_Brake = 0;
+  Right_Brake = 0;
+  Forward_Direction = true;
+}
+
+
+void brake() {
+  DEBUG_OUTPUTLN(F("\nbrake"));
+  Left_Speed = 0;
+  Right_Speed = 0;
+  ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+  ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+  digitalWrite(RMReversePin, Reverse);
+  digitalWrite(LMReversePin, Reverse);
+  digitalWrite(RMBrakePin, HIGH);
+  digitalWrite(LMBrakePin, HIGH);
+  Left_Brake = 1;
+  Right_Brake = 1;
+  Forward_Direction = false;
+}
+
+
+void moveRight() {
+  DEBUG_OUTPUTLN(F("\nmoveBackRight"));
+  if (USE_PWM) {
+    Left_Speed = Car_Speed + (Car_Speed/10);
+//    Left_Speed = constrain(Left_Speed, 0, 200);
+    Right_Speed = 0;
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+    DEBUG_OUTPUT(F("Car Speed is "));
+    DEBUG_OUTPUTLN(Car_Speed);
+  }
+  else {
+    Left_Speed = 0;
+    Right_Speed = 0;
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+  }
+  digitalWrite(RMReversePin, Reverse);
+  digitalWrite(LMReversePin, Reverse);
+  digitalWrite(RMBrakePin, HIGH);
+  digitalWrite(LMBrakePin, LOW);
+  Left_Brake = 0;
+  Right_Brake = 1;
+  Forward_Direction = false;
+}
+
+
+void moveLeft() {
+  DEBUG_OUTPUTLN(F("\nmoveBackLeft"));
+  if (USE_PWM) {
+    Left_Speed = 0;
+    Right_Speed = Car_Speed + (Car_Speed/10);
+//    Right_Speed = constrain(Right_Speed, 0, 200);
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+    DEBUG_OUTPUT(F("Car Speed is "));
+    DEBUG_OUTPUTLN(Car_Speed);
+  }
+  else {
+    Left_Speed = 0;
+    Right_Speed = 0;
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+  }
+  digitalWrite(RMReversePin, Reverse);
+  digitalWrite(LMReversePin, Reverse);
+  digitalWrite(RMBrakePin, LOW);
+  digitalWrite(LMBrakePin, HIGH);
+  Left_Brake = 1;
+  Right_Brake = 0;
+  Forward_Direction = false;
+}
+
+
+void moveForwardRight() {
+  DEBUG_OUTPUTLN(F("\nmoveForwardRight"));
+  if (USE_PWM) {
+    Left_Speed = Car_Speed + (Car_Speed/10);
+    Right_Speed = 0;
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+  }
+  else {
+    Left_Speed = 0;
+    Right_Speed = 0;
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+  }
+  digitalWrite(RMReversePin, Reverse);
+  digitalWrite(LMReversePin, Reverse);
+  digitalWrite(RMBrakePin, LOW);
+  digitalWrite(LMBrakePin, LOW);
+  Left_Brake = 0;
+  Right_Brake = 0;
+  Forward_Direction = false;
+
+}
+
+
+void moveForwardLeft() {
+  DEBUG_OUTPUTLN(F("\nmoveForwardLeft"));
+  if (USE_PWM) {
+    Left_Speed = 0;
+    Right_Speed = Car_Speed + (Car_Speed/10);
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);;
+  }
+  else {
+    Left_Speed = 0;
+    Right_Speed = 0;
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+  }
+  digitalWrite(RMReversePin, Reverse);
+  digitalWrite(LMReversePin, Reverse);
+  digitalWrite(RMBrakePin, LOW);
+  digitalWrite(LMBrakePin, LOW);
+  Left_Brake = 0;
+  Right_Brake = 0;
+  Forward_Direction = false;
+}
+
+
+void moveBackRight() {
+  DEBUG_OUTPUTLN(F("\nmoveBackRight"));
+  if (USE_PWM) {
+    Left_Speed = Car_Speed + (Car_Speed/10);
+    Right_Speed = Car_Speed + (Car_Speed/10);
+    Left_Speed = constrain(Left_Speed, 0, 200);
+    Right_Speed = constrain(Right_Speed, 0, 200);
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+    DEBUG_OUTPUT(F("Car Speed is "));
+    DEBUG_OUTPUTLN(Car_Speed);
+  }
+  else {
+    Left_Speed = 0;
+    Right_Speed = 0;
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+  }
+  if (Reverse == HIGH) { digitalWrite(RMReversePin, LOW); }
+  if (Reverse == LOW) { digitalWrite(RMReversePin, HIGH); }
+  digitalWrite(LMReversePin, Reverse);
+  digitalWrite(RMBrakePin, LOW);
+  digitalWrite(LMBrakePin, LOW);
+  Left_Brake = 0;
+  Right_Brake = 0;
+  Forward_Direction = false;
+}
+
+
+void moveBackLeft() {
+  DEBUG_OUTPUTLN(F("\nmoveBackLeft"));
+  if (USE_PWM) {
+    Left_Speed = Car_Speed + (Car_Speed/10);
+    Right_Speed = Car_Speed + (Car_Speed/10);
+    Left_Speed = constrain(Left_Speed, 0, 200);
+    Right_Speed = constrain(Right_Speed, 0, 200);
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+    DEBUG_OUTPUT(F("Car Speed is "));
+    DEBUG_OUTPUTLN(Car_Speed);
+  }
+  else {
+    Left_Speed = 0;
+    Right_Speed = 0;
+    ledcWrite(LM_PWM_CHANNEL_NUM, Left_Speed);
+    ledcWrite(RM_PWM_CHANNEL_NUM, Right_Speed);
+  }
+  if (Reverse == HIGH) { digitalWrite(LMReversePin, LOW); }
+  if (Reverse == LOW) { digitalWrite(LMReversePin, HIGH); }
+  digitalWrite(RMReversePin, Reverse);
+  digitalWrite(RMBrakePin, LOW);
+  digitalWrite(LMBrakePin, LOW);
+  Left_Brake = 0;
+  Right_Brake = 0;
+  Forward_Direction = false;
+}
+
+
+//void headLightControl(uint8_t NewState)
+//{
+//  digitalWrite(HeadLightPin, NewState);
+//
+//  DEBUG_OUTPUT(F("HeadLight is now: "));
+//  DEBUG_OUTPUTLN(NewState);
+//}
+
+//void hornControl(uint8_t NewState)
+//{
+//  digitalWrite(HornPin, NewState);
+//
+//  DEBUG_OUTPUT(F("Horn is now: "));
+//  DEBUG_OUTPUTLN(NewState);
+//}
+
+//void backLightControl(uint8_t NewState)
+//{
+//  digitalWrite(BackLightPin, NewState);
+//
+//  DEBUG_OUTPUT(F("BackLight is now: "));
+//  DEBUG_OUTPUTLN(NewState);
+//}
+//
+////WARNING: BLOCKING
+////Wait until we connect for first time to BT
+////Beep on Successful Connection
+//void BT_Wait_until_Connect_and_Beep_on_Success()
+//{
+//  while (true)
+//  {
+//    //Beep Buzzer for a very short while to indicate that the car is looking for BT Signal
+//    digitalWrite(HornPin, HIGH);
+//    delay(5);
+//    digitalWrite(HornPin, LOW);
+//    delay(500);
+//
+//    DEBUG_OUTPUT(F("."));
+//
+//    // Proceed only when you receive data:
+//    if (SerialBT.available() > 0)
+//    {
+//      BT_RecieveCode = SerialBT.read(); // Read the incoming data and store it into a variable
+//
+//      DEBUG_OUTPUTLN(BT_RecieveCode); // Print Value inside data in Serial monitor if Debug
+//
+//      //Check if stop code recieved
+//      if (BT_RecieveCode == 'S')
+//      {
+//        digitalWrite(HornPin, HIGH);
+//        delay(100);
+//        digitalWrite(HornPin, LOW);
+//        delay(75);
+//        digitalWrite(HornPin, HIGH);
+//        delay(200);
+//        digitalWrite(HornPin, LOW);
+//
+//        //Break out of checking loop to go into the main loop
+//        break;
+//      }
+//    }
+//  }
+//}
+
+
+
+
+// ############## ROS ##############
+//float gps = 0;
+//void msgCallBack(const std_msgs::Float64& msg) {
+//  gps = msg.data;
+//}
+//ros::Subscriber<std_msgs::Float64> sub("/gps/pose/pose/position/x", &msgCallback);
+
+
+//float floa = 32.420;
+//std_msgs::Float64 msg;
+//ros::Publisher sendData("data", &msg);
+
+std_msgs::Int32 left_pwm_msg;
+std_msgs::Int32 right_pwm_msg;
+ros::Publisher left_pwm("wheel_data", &left_pwm_msg);
+ros::Publisher right_pwm("wheel_data", &right_pwm_msg);
+std_msgs::Int32 left_wheel_brake_msg;
+std_msgs::Int32 right_wheel_brake_msg;
+ros::Publisher left_brake("wheel_data", &left_wheel_brake_msg);
+ros::Publisher right_brake("wheel_data", &right_wheel_brake_msg);
+
+
+
+std_msgs::Bool Forward;
+ros::Publisher FData("isForward", &Forward);
+
+void msgCallBack1(const std_msgs::Int32& left) { Left_Correction = left.data; }
+void msgCallBack2(const std_msgs::Int32& right) { Right_Correction = right.data; }
+ros::Subscriber<std_msgs::Int32> sub1("/pwm_left", &msgCallBack1);
+ros::Subscriber<std_msgs::Int32> sub2("/pwm_right", &msgCallBack2);
+
+
+void setup() {
+#ifdef RC_CAR_DEBUG
+  Serial.begin(SERIAL_BAUD_RATE);
+#endif
+
+  DEBUG_OUTPUTLN(F(">>>> Turbo RC Car V2 <<<<\nInitializing Device. . ."));
+  //Begin BT
+  SerialBT.begin(BT_DEVICE_NAME);
+
+  //Setup L298N PWM
+  ledcSetup(LM_PWM_CHANNEL_NUM, L298N_PWM_FREQ_HZ, L298N_PWM_RES_BITS);
+  ledcSetup(RM_PWM_CHANNEL_NUM, L298N_PWM_FREQ_HZ, L298N_PWM_RES_BITS);
+
+  //Attach the channel to the GPIO to be controlled
+  ledcAttachPin(LMPWMPin, LM_PWM_CHANNEL_NUM);
+  ledcAttachPin(RMPWMPin, RM_PWM_CHANNEL_NUM);
+  pinMode(RMReversePin, OUTPUT);        //Initialize pins as output
+  pinMode(RMBrakePin, OUTPUT);           //^
+  pinMode(LMReversePin, OUTPUT);        //^
+  pinMode(LMBrakePin, OUTPUT);           //^
+  //  pinMode(HornPin, OUTPUT);             //^
+  //  pinMode(HeadLightPin, OUTPUT);        //^
+  //  pinMode(BackLightPin, OUTPUT);        //^
+
+  //Set Default Pin States
+  Left_Correction = 0;
+  Right_Correction = 0; 
+  Forward_Direction = false;
+  ledcWrite(LM_PWM_CHANNEL_NUM, 0);  
+  ledcWrite(RM_PWM_CHANNEL_NUM, 1);
+  digitalWrite(RMReversePin, LOW);   
+  digitalWrite(LMReversePin, LOW);   
+  digitalWrite(RMBrakePin, LOW);     
+  digitalWrite(LMBrakePin, LOW);     
+  //  digitalWrite(HornPin, LOW);          
+  //  digitalWrite(HeadLightPin, LOW);     
+  //  digitalWrite(BackLightPin, LOW);  
+
+  DEBUG_OUTPUTLN(F("Device Initialized!\nWaiting for BT Connection. . ."));
+  //  //WANRING: BLOCKING!
+  //  //Wait until we get a connection
+  //  BT_Wait_until_Connect_and_Beep_on_Success();
+  DEBUG_OUTPUTLN(F("BT Connection Successful!\nCar Ready :)"));
+  
+  nh.initNode();
+  nh.getHardware()->setBaud(SERIAL_BAUD_RATE);
+  nh.subscribe(sub1);
+  nh.subscribe(sub2);
+  nh.advertise(FData);
+  nh.advertise(left_pwm);
+  nh.advertise(right_pwm);
+  nh.advertise(left_brake);
+  nh.advertise(right_brake);
+}
+
+void loop() {
+  // Proceed only when you receive data:
+  if (SerialBT.available() > 0) {
+    BT_RecieveCode = SerialBT.read(); // Read the incoming data and store it into a variable
+    DEBUG_OUTPUTLN(BT_RecieveCode); // Print Value inside data in Serial monitor if Debug
+    BT_LastReceivedTime = millis(); //Save last data received Time
+  }
+  else {
+    //Check if Connection was disconnected
+    if ((millis() - BT_LastReceivedTime) > BT_INCOMING_DATA_TIMEOUT_MS) {
+      //Stop the car immediately
+      brake();
+      DEBUG_OUTPUTLN(F("BT Device Connection Lost!\nSearching for Device. . ."));
+      //      //Indicate a disconnection using buzzzer
+      //      digitalWrite(HornPin, HIGH);
+      //      delay(500);
+      //      digitalWrite(HornPin, LOW);
+      //      delay(50);
+      //      digitalWrite(HornPin, HIGH);
+      //      delay(150);
+      //      digitalWrite(HornPin, LOW);
+      //
+      //      //WANRING: BLOCKING!
+      //      //Wait until we get a connection
+      //      BT_Wait_until_Connect_and_Beep_on_Success();
+    }
+
+    //Dont do anything for control, ignore this iteration
+    return;
+  }
+  
+  switch (BT_RecieveCode) {
+    case 'F':
+      moveForward();
+      break;
+    case 'B':
+      brake();
+      break;
+    case 'L':
+      moveLeft();
+      break;
+    case 'R':
+      moveRight();
+      break;
+    case 'S':
+      STOP();
+      break;
+    case 'G':
+      moveForwardLeft();
+      break;
+    case 'I':
+      moveForwardRight();
+      break;
+    case 'H':
+      moveBackLeft();
+      break;
+    case 'J':
+      moveBackRight();
+      break;
+    case 'U':
+      Reverse = HIGH;                 // Turn On BackLight
+      break;
+    case 'u':
+     Reverse = LOW;                   // Turn On BackLight
+      break;
+    case 'W':
+      changePWMState(true);           // Turn On SpeedControl
+      break;
+    case 'w':
+      changePWMState(false);          // Turn Off SpeedControl
+      break;
+//    case 'X':
+//      brake();                        // Emergency Stop / Handbrake On
+//      break;
+//    case 'x':
+//      STOP();                         // Emergency Stop / Handbrake Off
+//      break;
+//    case 'V':
+//      hornControl(HIGH);              // Turn On Horn
+//      break;
+//    case 'v':
+//      hornControl(LOW);               // Turn Off Horn
+//      break;
+
+    default:
+      changePWMState(false);
+      STOP();
+      break;
+  }
+
+  
+  Forward.data = Forward_Direction; 
+  FData.publish( &Forward );
+//  msg.data = floa;
+//  Serial.print(Left_Correction);
+  left_pwm_msg.data = Left_Correction;
+  right_pwm_msg.data = Right_Speed;
+  left_pwm.publish( &left_pwm_msg );
+  right_pwm.publish( &right_pwm_msg );
+
+  left_wheel_brake_msg.data = Left_Brake;
+  right_wheel_brake_msg.data = Right_Brake;
+  left_pwm.publish( &left_wheel_brake_msg );
+  right_pwm.publish( &right_wheel_brake_msg );
+
+//  delay(100);
+  nh.spinOnce();
+  //Handle Speed
+  SetSpeed(BT_RecieveCode);
+}
